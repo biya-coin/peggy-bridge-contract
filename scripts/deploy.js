@@ -87,36 +87,55 @@ async function main() {
     const implementationAddress = await upgrades.erc1967.getImplementationAddress(proxyAddress);
     console.log("实现合约地址:", implementationAddress);
 
-    // 新增：开源验证到 Etherscan（带错误处理）
-    console.log("\n开始开源验证合约到 Etherscan...");
+    let proxyDeployBlockNumber = "";
     try {
-        // 验证实现合约（核心开源部分）
-        await run("verify:verify", {
-            address: implementationAddress,
-            constructorArguments: [],  // 实现合约无参数
-            contract: "contracts/Peggy.sol:Peggy",  // 指定合约文件:合约名
-        });
+        const deployTx = proxy.deploymentTransaction();
+        if (deployTx) {
+            const receipt = await deployTx.wait();
+            if (receipt && receipt.blockNumber !== undefined && receipt.blockNumber !== null) {
+                proxyDeployBlockNumber = receipt.blockNumber.toString();
+            }
+        }
+    } catch (e) {
+    }
 
-        // 验证代理合约（可选，显示代理结构；简化参数以兼容 v6）
-        const adminAddress = await upgrades.erc1967.getAdminAddress(proxyAddress);
-        const initializerData = ethers.AbiCoder.defaultAbiCoder().encode(
-            ["bytes"],
-            [ethers.AbiCoder.defaultAbiCoder().encode(["address"], [implementationAddress])]
-        );
-        await run("verify:verify", {
-            address: proxyAddress,
-            constructorArguments: [
-                implementationAddress,  // 代理的逻辑合约地址
-                adminAddress,  // 代理的管理员地址
-                initializerData,  // 初始化数据（指向实现）
-            ],
-            contract: "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy",
-        });
+    console.log("PEGGY_PROXY_ADDRESS=" + proxyAddress);
+    console.log("PEGGY_IMPLEMENTATION_ADDRESS=" + implementationAddress);
+    if (proxyDeployBlockNumber) {
+        console.log("PEGGY_PROXY_DEPLOY_BLOCK_NUMBER=" + proxyDeployBlockNumber);
+    }
 
-        console.log("开源验证完成！");
-    } catch (verifyError) {
-        console.warn("Etherscan 验证失败（可能因网络延迟或 API 问题）:", verifyError.message);
-        console.log("可手动在 https://sepolia.etherscan.io/ 验证地址:", proxyAddress);
+    // 新增：开源验证到 Etherscan（带错误处理）
+    const skipVerify = process.env.SKIP_VERIFY === "1" || process.env.SKIP_VERIFY === "true";
+    if (!skipVerify && process.env.ETHERSCAN_API_KEY) {
+        console.log("\n开始开源验证合约到 Etherscan...");
+        try {
+            await run("verify:verify", {
+                address: implementationAddress,
+                constructorArguments: [],
+                contract: "contracts/Peggy.sol:Peggy",
+            });
+
+            const adminAddress = await upgrades.erc1967.getAdminAddress(proxyAddress);
+            const initializerData = ethers.AbiCoder.defaultAbiCoder().encode(
+                ["bytes"],
+                [ethers.AbiCoder.defaultAbiCoder().encode(["address"], [implementationAddress])]
+            );
+            await run("verify:verify", {
+                address: proxyAddress,
+                constructorArguments: [
+                    implementationAddress,
+                    adminAddress,
+                    initializerData,
+                ],
+                contract: "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol:TransparentUpgradeableProxy",
+            });
+
+            console.log("开源验证完成！");
+        } catch (verifyError) {
+            console.warn("Etherscan 验证失败（可能因网络延迟或 API 问题）:", verifyError.message);
+            console.log("可手动在 https://sepolia.etherscan.io/ 验证地址:", proxyAddress);
+        }
     }
 
     console.log("查看 Etherscan: https://sepolia.etherscan.io/address/" + proxyAddress);
